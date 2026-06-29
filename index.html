@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>地球与太阳 - 高中地理3D演示</title>
+  <meta name="description" content="高中地理教学3D互动演示工具，直观展示地球公转、自转、太阳直射点移动、昼夜长短变化、正午太阳高度角等核心地理知识。">
+  <meta name="keywords" content="地理教学, 地球公转, 太阳直射点, 昼夜长短, 正午太阳高度, 3D演示, 高中地理">
+  <meta name="author" content="高中地理教学演示">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./src/style.css">
+</head>
+<body>
+
+<div id="canvas-container"></div>
+
+<header id="header">
+  <h1>🌍 地球与太阳 — 高中地理3D演示</h1>
+  <div class="view-tabs">
+    <button id="btn-space-view" class="tab-btn active" title="纵观太阳系">🌌 太阳视角</button>
+    <button id="btn-earth-view" class="tab-btn" title="放大围绕地球观察">🌍 地球视角</button>
+    <button id="btn-surface-view" class="tab-btn" title="站在地面第一人称仰望天空">🧑‍🚀 实地视角</button>
+    <button id="btn-horizon-view" class="tab-btn" title="地面仰望天空">🌅 地平视角</button>
+  </div>
+</header>
+
+<aside id="control-panel">
+  <div class="panel-section">
+    <h3>📅 日期控制</h3>
+    <div class="control-row">
+      <label for="month-slider">月份</label>
+      <input type="range" id="month-slider" min="1" max="12" value="3" step="1">
+      <span id="month-value">3月</span>
+    </div>
+    <div class="control-row">
+      <label for="day-slider">日期</label>
+      <input type="range" id="day-slider" min="1" max="31" value="21" step="1">
+      <span id="day-value">21日</span>
+    </div>
+    <div class="quick-dates">
+      <button class="quick-btn" data-month="3" data-day="21">春分</button>
+      <button class="quick-btn" data-month="6" data-day="22">夏至</button>
+      <button class="quick-btn" data-month="9" data-day="23">秋分</button>
+      <button class="quick-btn" data-month="12" data-day="22">冬至</button>
+    </div>
+  </div>
+  
+  <div class="panel-section">
+    <h3>⏰ 时间控制</h3>
+    <div class="control-row">
+      <label for="hour-slider">时间</label>
+      <input type="range" id="hour-slider" min="0" max="24" value="12" step="0.25">
+      <span id="hour-value">12:00</span>
+    </div>
+  </div>
+  
+  <div class="panel-section" id="latitude-section">
+    <h3>📍 观察者纬度</h3>
+    <div class="control-row">
+      <label for="lat-slider">纬度</label>
+      <input type="range" id="lat-slider" min="-90" max="90" value="40" step="1">
+      <span id="lat-value">40°N</span>
+    </div>
+    <div class="preset-buttons">
+      <button class="preset-btn" data-lat="90">北极 90°N</button>
+      <button class="preset-btn" data-lat="66.56">北极圈</button>
+      <button class="preset-btn" data-lat="23.44">北回归线</button>
+      <button class="preset-btn" data-lat="0">赤道 0°</button>
+      <button class="preset-btn" data-lat="-23.44">南回归线</button>
+      <button class="preset-btn" data-lat="-66.56">南极圈</button>
+      <button class="preset-btn" data-lat="-90">南极 90°S</button>
+    </div>
+  </div>
+  
+  <div class="panel-section" id="location-section">
+    <h3>📌 地点管理</h3>
+    <div class="add-location-form">
+      <input type="text" id="loc-name" placeholder="地点名称 (如: 北京)" class="form-input">
+      <div class="form-row">
+        <input type="number" id="loc-lat" placeholder="纬度 (-90~90)" class="form-input half">
+        <input type="number" id="loc-lng" placeholder="经度 (-180~180)" class="form-input half">
+      </div>
+      <button id="btn-add-loc" class="form-btn">+ 添加并标出地点</button>
+    </div>
+    <div id="location-list" class="location-list">
+      <!-- JS 动态生成的地点列表 -->
+    </div>
+  </div>
+  
+  <div class="panel-section">
+    <h3>⚙️ 显示设置</h3>
+    <div class="toggle-row">
+      <label>辅助线</label>
+      <input type="checkbox" id="toggle-helpers" class="toggle-switch" checked>
+    </div>
+    <div class="toggle-row">
+      <label>标注文字</label>
+      <input type="checkbox" id="toggle-labels" class="toggle-switch" checked>
+    </div>
+    <div class="toggle-row" id="row-anim-rev">
+      <label>自动公转(日期)</label>
+      <input type="checkbox" id="toggle-anim-rev" class="toggle-switch">
+    </div>
+    <div class="toggle-row">
+      <label>自动自转(时间)</label>
+      <input type="checkbox" id="toggle-anim-rot" class="toggle-switch">
+    </div>
+    <div class="control-row" id="speed-row">
+      <label for="speed-slider">播放速度</label>
+      <input type="range" id="speed-slider" min="0.1" max="5" value="1" step="0.1">
+      <span id="speed-value">1x</span>
+    </div>
+    <div class="control-row" id="reset-cam-row" style="margin-top: 15px;">
+      <button id="btn-reset-camera" class="form-btn" style="width: 100%;">重置相机视角</button>
+    </div>
+  </div>
+</aside>
+
+<aside id="info-panel">
+  <div class="panel-section">
+    <h3>📊 当前数据</h3>
+    <div class="info-grid">
+      <div class="info-item"><span class="info-label">日期</span><span class="info-value" id="info-date">3月21日 (春分)</span></div>
+      <div class="info-item"><span class="info-label">太阳直射点</span><span class="info-value" id="info-subsolar">0° (赤道)</span></div>
+      <div class="info-item"><span class="info-label">昼长</span><span class="info-value" id="info-daylength">12小时0分</span></div>
+      <div class="info-item"><span class="info-label">当前太阳高度</span><span class="info-value" id="info-current-alt">0.0°</span></div>
+      <div class="info-item"><span class="info-label">正午太阳高度</span><span class="info-value" id="info-noon-alt">50.0°</span></div>
+      <div class="info-item"><span class="info-label">日出方位</span><span class="info-value" id="info-sunrise-az">正东 90°</span></div>
+      <div class="info-item"><span class="info-label">日落方位</span><span class="info-value" id="info-sunset-az">正西 270°</span></div>
+    </div>
+  </div>
+  <div class="panel-section">
+    <h3>📝 地理知识</h3>
+    <p id="info-description" class="description-text">春分日，太阳直射赤道，全球昼夜等长。</p>
+  </div>
+</aside>
+
+<button id="toggle-left" class="panel-toggle toggle-left" title="收起/展开控制面板">◀</button>
+<button id="toggle-right" class="panel-toggle toggle-right" title="收起/展开数据面板">▶</button>
+
+<footer id="footer">
+  <span>🖱 左键旋转 · 右键平移 · 滚轮缩放</span>
+  <span>高中地理教学演示工具</span>
+</footer>
+
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>

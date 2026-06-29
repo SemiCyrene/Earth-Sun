@@ -1,0 +1,664 @@
+/* ============================================
+   地球与太阳 3D演示 — Premium Dark Glassmorphism
+   ============================================ */
+
+/* --- CSS Reset --- */
+*,
+*::before,
+*::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+/* --- Custom Properties --- */
+:root {
+  --bg-deep: #050510;
+  --glass-bg: rgba(15, 20, 40, 0.75);
+  --glass-border: rgba(100, 140, 255, 0.15);
+  --glass-highlight: rgba(100, 140, 255, 0.08);
+  --primary: #4fc3f7;
+  --secondary: #ff9800;
+  --success: #66bb6a;
+  --text: #e8eaf6;
+  --text-muted: #7986cb;
+  --accent-glow: rgba(79, 195, 247, 0.3);
+}
+
+/* --- Fade-in Animation --- */
+@keyframes panelFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes headerSlideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes footerSlideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* --- Body & Canvas --- */
+body {
+  overflow: hidden;
+  background: var(--bg-deep);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#canvas-container {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+}
+
+#canvas-container canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* --- Glass Panel Shared Style --- */
+#header,
+#control-panel,
+#info-panel,
+#footer {
+  background: var(--glass-bg);
+  backdrop-filter: blur(20px) saturate(1.5);
+  -webkit-backdrop-filter: blur(20px) saturate(1.5);
+  border: 1px solid var(--glass-border);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+/* --- Header --- */
+#header {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 60px;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+  border-top: none;
+  border-left: none;
+  border-right: none;
+  animation: headerSlideDown 0.6s ease-out both;
+}
+
+#header h1 {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+}
+
+.view-tabs {
+  display: flex;
+  gap: 8px;
+}
+
+.tab-btn {
+  background: transparent;
+  border: 1px solid var(--glass-border);
+  color: var(--text-muted);
+  padding: 8px 20px;
+  border-radius: 20px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  transition: all 0.3s ease;
+  white-space: nowrap;
+}
+
+.tab-btn:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.tab-btn.active {
+  background: rgba(79, 195, 247, 0.15);
+  border-color: var(--primary);
+  color: var(--primary);
+  box-shadow: 0 0 12px var(--accent-glow);
+}
+
+/* --- Control Panel (Left) --- */
+#control-panel {
+  position: fixed;
+  left: 0;
+  top: 72px;
+  bottom: 48px;
+  width: 300px;
+  z-index: 100;
+  overflow-y: auto;
+  padding: 16px; /* 恢复原样，不再下移 */
+  border-top: none;
+  border-bottom: none;
+  border-left: none;
+  animation: panelFadeIn 0.6s ease-out 0.15s backwards;
+  transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* --- Info Panel (Right) --- */
+#info-panel {
+  position: fixed;
+  right: 0;
+  top: 72px;
+  bottom: 48px;
+  width: 320px;
+  z-index: 100;
+  overflow-y: auto;
+  padding: 48px 16px 16px 16px; /* 增加顶部内边距，给折叠按钮留出空间 */
+  border-top: none;
+  border-bottom: none;
+  border-right: none;
+  animation: panelFadeIn 0.6s ease-out 0.3s backwards;
+  transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* --- Panel Collapsed States --- */
+#control-panel.collapsed {
+  transform: translateX(-100%);
+}
+
+#info-panel.collapsed {
+  transform: translateX(100%);
+}
+
+/* --- Panel Toggle Buttons --- */
+.panel-toggle {
+  position: fixed;
+  top: 80px; /* 放置在面板的顶部区域 */
+  z-index: 110;
+  width: 32px;
+  height: 32px;
+  background: rgba(15, 20, 40, 0.85);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--glass-border);
+  color: var(--text);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  border-radius: 50%; /* 圆形按钮 */
+  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.panel-toggle:hover {
+  color: #fff;
+  background: rgba(79, 195, 247, 0.2);
+  border-color: var(--primary);
+  box-shadow: 0 0 12px rgba(79, 195, 247, 0.4);
+}
+
+.toggle-left {
+  left: 260px; /* 300px 面板宽度，放在右上角，距右边缘 8px */
+}
+
+#control-panel.collapsed ~ .toggle-left {
+  left: 10px; /* 折叠后贴边 */
+}
+
+.toggle-right {
+  right: 280px; /* 320px 面板宽度，放在左上角，距左边缘 8px */
+}
+
+#info-panel.collapsed ~ .toggle-right {
+  right: 10px; /* 折叠后贴边 */
+}
+
+/* --- Footer --- */
+#footer {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 40px;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+  font-size: 13px;
+  color: var(--text-muted);
+  border-bottom: none;
+  border-left: none;
+  border-right: none;
+  animation: footerSlideUp 0.6s ease-out 0.4s both;
+}
+
+/* --- Panel Sections --- */
+.panel-section {
+  padding: 14px 0;
+  border-bottom: 1px solid var(--glass-border);
+}
+
+.panel-section:last-child {
+  border-bottom: none;
+}
+
+.panel-section h3 {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 12px;
+}
+
+/* --- Control Rows --- */
+.control-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.control-row label {
+  flex: 0 0 50px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.control-row input[type="range"] {
+  flex: 1;
+}
+
+.control-row span {
+  flex: 0 0 60px;
+  text-align: right;
+  font-size: 13px;
+  color: var(--primary);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Custom Range Slider (WebKit) --- */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+  outline: none;
+  cursor: pointer;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--primary);
+  cursor: pointer;
+  box-shadow: 0 0 8px var(--accent-glow);
+  transition: transform 0.2s ease;
+  border: none;
+}
+
+input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+}
+
+/* --- Custom Range Slider (Firefox) --- */
+input[type="range"]::-moz-range-track {
+  height: 6px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+  border: none;
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--primary);
+  cursor: pointer;
+  box-shadow: 0 0 8px var(--accent-glow);
+  border: none;
+  transition: transform 0.2s ease;
+}
+
+input[type="range"]::-moz-range-thumb:hover {
+  transform: scale(1.2);
+}
+
+/* --- Quick Date Buttons / Preset Buttons --- */
+.quick-dates,
+.preset-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.quick-btn,
+.preset-btn {
+  background: var(--glass-highlight);
+  border: 1px solid var(--glass-border);
+  color: var(--text-muted);
+  padding: 4px 12px;
+  border-radius: 14px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  white-space: nowrap;
+}
+
+.quick-btn:hover,
+.preset-btn:hover {
+  border-color: var(--secondary);
+  color: var(--secondary);
+  background: rgba(255, 152, 0, 0.1);
+}
+
+.quick-btn:active,
+.preset-btn:active {
+  transform: scale(0.95);
+}
+
+/* --- Toggle Switch (Custom Checkbox) --- */
+.toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.toggle-row label {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.toggle-switch {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 40px;
+  height: 22px;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 11px;
+  position: relative;
+  cursor: pointer;
+  transition: background 0.3s ease;
+  flex-shrink: 0;
+  border: none;
+  outline: none;
+}
+
+.toggle-switch::before {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  background: white;
+  border-radius: 50%;
+  transition: transform 0.3s ease;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.toggle-switch:checked {
+  background: var(--primary);
+}
+
+.toggle-switch:checked::before {
+  transform: translateX(18px);
+}
+
+/* --- Info Panel Grid --- */
+.info-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0;
+}
+
+.info-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.info-item:last-child {
+  border-bottom: none;
+}
+
+.info-label {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.info-value {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.description-text {
+  font-size: 13px;
+  line-height: 1.8;
+  color: var(--text);
+  white-space: pre-line;
+}
+
+/* --- Latitude Section (Hidden by default, shown in horizon mode) --- */
+#latitude-section {
+  display: none;
+}
+
+body.horizon-mode #latitude-section {
+  display: block;
+}
+
+body.horizon-mode .horizon-only {
+  display: flex !important;
+}
+
+body.horizon-mode #row-anim-rev {
+  display: none;
+}
+
+/* --- Custom Scrollbar (WebKit) --- */
+#control-panel::-webkit-scrollbar,
+#info-panel::-webkit-scrollbar {
+  width: 4px;
+}
+
+#control-panel::-webkit-scrollbar-track,
+#info-panel::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+#control-panel::-webkit-scrollbar-thumb,
+#info-panel::-webkit-scrollbar-thumb {
+  background: var(--glass-border);
+  border-radius: 2px;
+}
+
+/* --- Firefox Scrollbar --- */
+#control-panel,
+#info-panel {
+  scrollbar-width: thin;
+  scrollbar-color: var(--glass-border) transparent;
+}
+
+/* --- Selection Color --- */
+::selection {
+  background: rgba(79, 195, 247, 0.3);
+  color: var(--text);
+}
+
+/* --- Focus States for Accessibility --- */
+.tab-btn:focus-visible,
+.quick-btn:focus-visible,
+.preset-btn:focus-visible,
+.toggle-switch:focus-visible,
+input[type="range"]:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+/* --- Location Management Form --- */
+.add-location-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.form-input {
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--glass-border);
+  color: var(--text);
+  padding: 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  outline: none;
+  transition: border-color 0.2s;
+  min-width: 0;
+  width: 100%;
+}
+
+.form-input:focus {
+  border-color: var(--primary);
+}
+
+.form-row {
+  display: flex;
+  gap: 8px;
+}
+
+.form-input.half {
+  flex: 1;
+}
+
+.form-btn {
+  background: rgba(79, 195, 247, 0.2);
+  color: var(--primary);
+  border: 1px solid var(--primary);
+  padding: 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  transition: all 0.2s;
+}
+
+.form-btn:hover {
+  background: var(--primary);
+  color: #050510;
+}
+
+.location-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 150px;
+  overflow-y: auto;
+}
+
+.location-list::-webkit-scrollbar {
+  width: 4px;
+}
+.location-list::-webkit-scrollbar-track {
+  background: rgba(0,0,0,0.1);
+}
+.location-list::-webkit-scrollbar-thumb {
+  background: var(--glass-border);
+  border-radius: 2px;
+}
+
+.loc-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 4px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all 0.2s;
+}
+
+.loc-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.loc-item.active {
+  border-color: var(--primary);
+  background: rgba(79, 195, 247, 0.1);
+}
+
+.loc-item-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.loc-color-indicator {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+.loc-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.loc-coords {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.loc-delete {
+  color: #ff5252;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 4px;
+  font-size: 14px;
+  opacity: 0.7;
+  transition: opacity 0.2s;
+}
+
+.loc-delete:hover {
+  opacity: 1;
+}
