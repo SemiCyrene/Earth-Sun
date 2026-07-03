@@ -307,3 +307,162 @@ export function getGeoDescription(month, day, latitudeDeg) {
 
   return desc;
 }
+
+// ===== 月球相关计算 =====
+
+/**
+ * 根据月相日期 (1~30) 计算理想化月相夹角（弧度）
+ * 教学理想化对应关系：农历初一=0, 初八=π/2 (90°), 十五=π (180°), 廿三=3π/2 (270°), 三十=2π
+ * @param {number} moonDay - 月相日期 (1-30)
+ * @returns {number} 月相夹角（弧度）
+ */
+export function getMoonPhaseAngle(moonDay) {
+  const d = moonDay;
+  if (d < 8) {
+    return ((d - 1) / 7) * (Math.PI / 2);
+  } else if (d < 15) {
+    return Math.PI / 2 + ((d - 8) / 7) * (Math.PI / 2);
+  } else if (d < 23) {
+    return Math.PI + ((d - 15) / 8) * (Math.PI / 2);
+  } else {
+    // 教学理想化：下一次初一（新月，0°/360°）对应第 29.53 + 1 = 30.53 天。
+    // 这使得“农历三十”成为晦日（极窄的残月），只有到了下个月初一才重新闭合为新月。
+    const maxDay = 29.53 + 1;
+    if (d >= maxDay) return 0;
+    return (3 * Math.PI / 2) + ((d - 23) / (maxDay - 23)) * (Math.PI / 2);
+  }
+}
+
+/**
+ * 根据月相角返回月相名称
+ * @param {number} phaseAngle - 月相角（弧度）
+ * @returns {string} 月相名称
+ */
+export function getMoonPhaseName(phaseAngle) {
+  // 归一化到 [0, 2π)
+  const a = ((phaseAngle % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+  const deg = a * 180 / Math.PI;
+  if (deg < 22.5 || deg >= 337.5) return '🌑 新月';
+  if (deg < 67.5) return '🌒 蛾眉月';
+  if (deg < 112.5) return '🌓 上弦月';
+  if (deg < 157.5) return '🌔 盈凸月';
+  if (deg < 202.5) return '🌕 满月';
+  if (deg < 247.5) return '🌖 亏凸月';
+  if (deg < 292.5) return '🌗 下弦月';
+  return '🌘 残月';
+}
+
+/**
+ * 计算月球的高度角和方位角（弧度）
+ * @param {number} latitudeDeg - 观察者纬度（度，北纬为正）
+ * @param {number} dayOfYear - 一年中的第几天
+ * @param {number} hour - 一天中的小时 (0~24)
+ * @param {number} moonDay - 月相日期 (1~30)
+ * @returns {{altitude: number, azimuth: number}} 月球高度角和方位角（弧度）
+ */
+export function getMoonPosition(latitudeDeg, dayOfYear, hour, moonDay = 15) {
+  const i = 0.0; // 月轨倾角 (已根据教学需求理想化抹平为0)
+  const T = 23.44 * Math.PI / 180; // 黄赤交角
+  const D = 3.5; // 轨道半径
+
+  // 1. 获取地球公转角及太阳地心黄经
+  const orbitalAngle = getEarthOrbitalAngle(dayOfYear);
+  const lambda_sun = orbitalAngle + Math.PI; // 地心视太阳黄经
+
+  // 2. 根据月相日期计算月相角 (使用理想化插值函数)
+  const moonPhaseAngle = getMoonPhaseAngle(moonDay);
+
+  // 3. 计算月球在黄道面中的绝对位置 (基于太阳黄经以消除公转导致的相位平移)
+  const L_moon = lambda_sun + moonPhaseAngle;
+  const mx = D * Math.cos(L_moon);
+  const mz = -D * Math.sin(L_moon);
+
+  // 绕 X 轴旋转 i (月轨倾斜)
+  const mx_tilt = mx;
+  const my_tilt = mz * Math.sin(i);
+  const mz_tilt = mz * Math.cos(i);
+
+  // 4. 将其转换到赤道坐标系中 (equatorial frame)
+  // 绕 X 轴旋转 -T (赤道倾斜)
+  const cosT = Math.cos(-T);
+  const sinT = Math.sin(-T);
+  const vx = mx_tilt;
+  const vy = my_tilt * cosT - mz_tilt * sinT;
+  const vz = my_tilt * sinT + mz_tilt * cosT;
+
+  // 月球赤纬和赤经
+  const declination = Math.asin(vy / D);
+  const alpha_m = Math.atan2(vz, vx);
+
+  // 5. 计算太阳的赤经以获取本地恒星时
+  // 太阳在黄道坐标系中的位置 (相对于地球是相反方向)
+  const sx = -Math.cos(orbitalAngle);
+  const sy = 0;
+  const sz = Math.sin(orbitalAngle);
+
+  // 太阳转换到赤道坐标系
+  const svx = sx;
+  const svy = sy * cosT - sz * sinT;
+  const svz = sy * sinT + sz * cosT;
+  const alpha_s = Math.atan2(svz, svx);
+
+  // 6. 计算月球时角
+  const hourAngleSun = degToRad((hour - 12) * 15);
+  // LST = hourAngleSun + alpha_s
+  // hourAngleMoon = LST - alpha_m
+  let hourAngleMoon = hourAngleSun + alpha_s - alpha_m;
+  
+  // 归一化到 [-π, π]
+  hourAngleMoon = Math.atan2(Math.sin(hourAngleMoon), Math.cos(hourAngleMoon));
+
+  // 7. 计算高度角和方位角
+  const latRad = degToRad(latitudeDeg);
+  const altitude = getSolarAltitude(latRad, declination, hourAngleMoon);
+  const azimuth = getSolarAzimuth(latRad, declination, hourAngleMoon, altitude);
+
+  return { altitude, azimuth };
+}
+
+/**
+ * 获取月球的赤纬（弧度，考虑季节变化）
+ * @param {number} dayOfYear - 一年中的第几天
+ * @param {number} moonDay - 月相日期 (1~30)
+ * @returns {number} 月球赤纬（弧度）
+ */
+export function getMoonDeclination(dayOfYear, moonDay) {
+  const i = 0.0; // 月轨倾角 (已根据教学需求理想化抹平为0)
+  const T = 23.44 * Math.PI / 180; // 黄赤交角
+  const D = 3.5; // 轨道半径
+
+  const orbitalAngle = getEarthOrbitalAngle(dayOfYear);
+  const lambda_sun = orbitalAngle + Math.PI;
+  const moonPhaseAngle = getMoonPhaseAngle(moonDay);
+  const L_moon = lambda_sun + moonPhaseAngle;
+
+  const mx = D * Math.cos(L_moon);
+  const mz = -D * Math.sin(L_moon);
+
+  const mx_tilt = mx;
+  const my_tilt = mz * Math.sin(i);
+  const mz_tilt = mz * Math.cos(i);
+
+  const cosT = Math.cos(-T);
+  const sinT = Math.sin(-T);
+  const vy = my_tilt * cosT - mz_tilt * sinT;
+
+  return Math.asin(vy / D);
+}
+
+/**
+ * 计算当天的月球最大高度角（弧度，考虑季节变化）
+ * @param {number} latitudeDeg - 观察者纬度（度）
+ * @param {number} dayOfYear - 一年中的第几天
+ * @param {number} moonDay - 月相日期 (1~30)
+ * @returns {number} 最大高度角（弧度）
+ */
+export function getMoonMaxAltitude(latitudeDeg, dayOfYear, moonDay) {
+  const latRad = degToRad(latitudeDeg);
+  const decl = getMoonDeclination(dayOfYear, moonDay);
+  return Math.PI / 2 - Math.abs(latRad - decl);
+}
+

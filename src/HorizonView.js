@@ -1,6 +1,6 @@
 // 地平视角模块 - 从地球表面某一位置观察天空穹顶
 import * as THREE from 'three';
-import { degToRad, radToDeg, getSolarDeclination, getSolarPosition, getSunriseHourAngle, getNoonAltitude, getDayLength } from './GeoMath.js';
+import { degToRad, radToDeg, getSolarDeclination, getSolarPosition, getSunriseHourAngle, getNoonAltitude, getDayLength, getMoonPosition } from './GeoMath.js';
 
 // 天穹半径与地面半径常量
 const SKY_RADIUS = 40;
@@ -37,8 +37,8 @@ export class HorizonView {
     this._createSkyDome();
     this._createCardinalDirections();
     this._createSunObject();
+    this._createMoonObject();
     this._createHelpers();
-    this._createAltitudeIndicator();
   }
 
   /**
@@ -201,6 +201,66 @@ export class HorizonView {
   }
 
   /**
+   * 创建月球对象 - 包含亮面Shader球体
+   */
+  _createMoonObject() {
+    const moonGeo = new THREE.SphereGeometry(0.5, 32, 32); // 略微放大以便看清
+    this.moonMat = new THREE.ShaderMaterial({
+      uniforms: {
+        sunPosition: { value: new THREE.Vector3(0, 0, 0) },
+        opacity: { value: 1.0 }
+      },
+      transparent: true,
+      vertexShader: `
+        varying vec3 vNormal;
+        varying vec3 vWorldPosition;
+        void main() {
+          vec4 worldPos = modelMatrix * vec4(position, 1.0);
+          vWorldPosition = worldPos.xyz;
+          vNormal = normalize(mat3(modelMatrix) * normal);
+          gl_Position = projectionMatrix * viewMatrix * worldPos;
+        }
+      `,
+      fragmentShader: `
+        uniform vec3 sunPosition;
+        uniform float opacity;
+        varying vec3 vNormal;
+        varying vec3 vWorldPosition;
+        void main() {
+          // 太阳在无限远处，光线为平行光。方向为从地心指向太阳位置。
+          vec3 lightDir = normalize(sunPosition);
+          float intensity = dot(vNormal, lightDir);
+          vec3 brightColor = vec3(0.95, 0.93, 0.88);
+          // 增加更清晰的地球反照光（地球光），使新月或暗面在天空中保留明晰可见轮廓，便于教学展示
+          vec3 darkColor   = vec3(0.18, 0.20, 0.26);
+          float t = smoothstep(-0.04, 0.04, intensity);
+          gl_FragColor = vec4(mix(darkColor, brightColor, t), opacity);
+        }
+      `
+    });
+    this.moon = new THREE.Mesh(moonGeo, this.moonMat);
+    this.moon.visible = true; // 默认可见，在地平线下半透明
+    this.group.add(this.moon);
+
+    // 月球连接线（地面中心到月球）
+    const lineGeo = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(0, 0, 0),
+      new THREE.Vector3(0, SKY_RADIUS, 0) // 初始占位
+    ]);
+    const lineMat = new THREE.LineDashedMaterial({
+      color: 0x88ccff,
+      transparent: true,
+      opacity: 0.6,
+      dashSize: 1,
+      gapSize: 0.5
+    });
+    this.moonConnectionLine = new THREE.Line(lineGeo, lineMat);
+    this.moonConnectionLine.computeLineDistances();
+    this.group.add(this.moonConnectionLine);
+    this.helpers.push(this.moonConnectionLine);
+  }
+
+  /**
    * 创建辅助参考线 - 高度圈、子午线、天顶标记
    */
   _createHelpers() {
@@ -254,11 +314,12 @@ export class HorizonView {
   }
 
   /**
-   * 构建太阳日轨迹线
+   * 构建太阳和月球日轨迹线
    * @param {number} latitudeDeg - 纬度（度）
    * @param {number} dayOfYear - 年内第几天
+   * @param {number} moonDay - 月相日期 (1~30)
    */
-  _buildTrajectory(latitudeDeg, dayOfYear) {
+  _buildTrajectory(latitudeDeg, dayOfYear, moonDay = 15) {
     // 清除旧轨迹对象
     for (const obj of this.trajectoryObjects) {
       this.group.remove(obj);
@@ -327,6 +388,7 @@ export class HorizonView {
       const aboveLine = new THREE.Line(aboveGeo, aboveMat);
       this.group.add(aboveLine);
       this.trajectoryObjects.push(aboveLine);
+      this.sunTrajectoryAboveLine = aboveLine; // 保存引用
     }
 
     // 地平线以下轨迹 - 虚线
@@ -346,17 +408,43 @@ export class HorizonView {
       belowLine.computeLineDistances();
       this.group.add(belowLine);
       this.trajectoryObjects.push(belowLine);
+      this.sunTrajectoryBelowLine = belowLine; // 保存引用
+    }
+
+    // 3. 月球视轨迹绘制 (浅蓝色虚线)
+    const moonPoints = [];
+    for (let h = 0; h <= 24; h += 0.25) {
+      const pos = getMoonPosition(latitudeDeg, dayOfYear, h, moonDay);
+      const alt = pos.altitude;
+      const az = pos.azimuth;
+
+      const x = SKY_RADIUS * Math.cos(alt) * Math.sin(az);
+      const y = SKY_RADIUS * Math.sin(alt);
+      const z = -SKY_RADIUS * Math.cos(alt) * Math.cos(az);
+
+      moonPoints.push(new THREE.Vector3(x, y, z));
+    }
+
+    if (moonPoints.length > 1) {
+      const moonGeo = new THREE.BufferGeometry().setFromPoints(moonPoints);
+      const moonMat = new THREE.LineDashedMaterial({
+        color: 0x88ccff,
+        transparent: true,
+        opacity: 0.5,
+        dashSize: 0.8,
+        gapSize: 0.5
+      });
+      const moonLine = new THREE.Line(moonGeo, moonMat);
+      moonLine.computeLineDistances();
+      this.group.add(moonLine);
+      this.trajectoryObjects.push(moonLine);
+      this.moonTrajectoryLine = moonLine; // 保存引用
     }
   }
 
   /**
-   * 创建高度角指示器（初始化占位）
+   * 创建高度角指示器（已移除，不直接在天空显示）
    */
-  _createAltitudeIndicator() {
-    // 高度弧和标签将在 update 时动态创建
-    this.altitudeArc = null;
-    this.altitudeLabel = null;
-  }
 
   /**
    * 更新地平视角的所有元素
@@ -365,13 +453,17 @@ export class HorizonView {
    * @param {number} timeOfDay - 当前时刻（小时，浮点数）
    * @param {boolean} showHelpers - 是否显示辅助线
    * @param {boolean} showLabels - 是否显示标签
+   * @param {number} moonDay - 月相日期 (1~30)
+   * @param {boolean} showSun - 是否显示太阳
+   * @param {boolean} showMoon - 是否显示月球
    */
-  update(latitudeDeg, dayOfYear, timeOfDay, showHelpers, showLabels) {
-    // 纬度或日期变化时重建轨迹
-    if (latitudeDeg !== this.prevLat || dayOfYear !== this.prevDay) {
-      this._buildTrajectory(latitudeDeg, dayOfYear);
+  update(latitudeDeg, dayOfYear, timeOfDay, showHelpers, showLabels, moonDay = 15, showSun = true, showMoon = true) {
+    // 纬度、日期或月球日期变化时重建轨迹
+    if (latitudeDeg !== this.prevLat || dayOfYear !== this.prevDay || moonDay !== this.prevMoonDay) {
+      this._buildTrajectory(latitudeDeg, dayOfYear, moonDay);
       this.prevLat = latitudeDeg;
       this.prevDay = dayOfYear;
+      this.prevMoonDay = moonDay;
     }
 
     // 计算当前太阳位置
@@ -402,21 +494,66 @@ export class HorizonView {
       }
     }
 
-    // 太阳在地平线以下时降低亮度
+    // 太阳在地平线以下时降低亮度，若设为隐藏则彻底关闭光源与本体
+    this.sun.visible = showSun;
     if (alt < 0) {
       this.sun.material.opacity = 0.2;
       this.sun.material.transparent = true;
       this.sunGlow.material.opacity = 0.2;
-      this.sunLight.intensity = 0.1;
+      this.sunLight.intensity = showSun ? 0.1 : 0.0;
     } else {
       this.sun.material.opacity = 1.0;
       this.sun.material.transparent = false;
       this.sunGlow.material.opacity = 1.0;
-      this.sunLight.intensity = 1.5;
+      this.sunLight.intensity = showSun ? 1.5 : 0.0;
     }
 
-    // 更新高度角指示器
-    this._updateAltitudeIndicator(alt, az);
+    // 计算当前月球的角坐标与三维直角坐标
+    const moonPos = getMoonPosition(latitudeDeg, dayOfYear, timeOfDay, moonDay);
+    const moonAlt = moonPos.altitude;
+    const moonAz = moonPos.azimuth;
+
+    const moonX = SKY_RADIUS * Math.cos(moonAlt) * Math.sin(moonAz);
+    const moonY = SKY_RADIUS * Math.sin(moonAlt);
+    const moonZ = -SKY_RADIUS * Math.cos(moonAlt) * Math.cos(moonAz);
+
+    if (this.moon) {
+      this.moon.position.set(moonX, moonY, moonZ);
+
+      // 月相Shader的太阳位置更新
+      if (this.moonMat) {
+        this.moonMat.uniforms.sunPosition.value.set(sunX, sunY, sunZ);
+        
+        // 位于地平线以下时变为半透明 (0.2)，在地上时全透明 (1.0)
+        if (moonAlt < 0) {
+          this.moonMat.uniforms.opacity.value = 0.2;
+        } else {
+          this.moonMat.uniforms.opacity.value = 1.0;
+        }
+      }
+      this.moon.visible = showMoon; // 根据控制显示/隐藏
+    }
+
+    // 更新高度角指示器：太阳（金黄色）与月球（浅蓝色），只标记名称，不带数字值，根据控制决定是否创建显示
+    this._updateAltitudeIndicator('sun', alt, az, 0xff9800, showSun);
+    this._updateAltitudeIndicator('moon', moonAlt, moonAz, 0x88ccff, showMoon);
+
+    // 更新月球连接线
+    if (this.moonConnectionLine) {
+      const positions = this.moonConnectionLine.geometry.attributes.position.array;
+      positions[3] = moonX;
+      positions[4] = moonY;
+      positions[5] = moonZ;
+      this.moonConnectionLine.geometry.attributes.position.needsUpdate = true;
+      this.moonConnectionLine.computeLineDistances();
+      
+      // 位于地平线以下时降低连接线透明度
+      if (moonAlt < 0) {
+        this.moonConnectionLine.material.opacity = 0.15;
+      } else {
+        this.moonConnectionLine.material.opacity = 0.6;
+      }
+    }
 
     // 更新光源方向（使其照向场景中心）
     this.sunLight.position.set(0, 0, 0); // 点光源附着在太阳上，位置相对太阳
@@ -424,6 +561,25 @@ export class HorizonView {
     // 切换辅助线可见性
     for (const helper of this.helpers) {
       helper.visible = showHelpers;
+    }
+    
+    // 如果太阳或月亮被隐藏，则其连接线即使在辅助线开启时也应该保持隐藏
+    if (this.sunConnectionLine) {
+      this.sunConnectionLine.visible = showHelpers && showSun;
+    }
+    if (this.moonConnectionLine) {
+      this.moonConnectionLine.visible = showHelpers && showMoon;
+    }
+
+    // 强制同步太阳和月球的运行轨迹线可见性（辅助线开启且天体未隐藏时显示）
+    if (this.sunTrajectoryAboveLine) {
+      this.sunTrajectoryAboveLine.visible = showHelpers && showSun;
+    }
+    if (this.sunTrajectoryBelowLine) {
+      this.sunTrajectoryBelowLine.visible = showHelpers && showSun;
+    }
+    if (this.moonTrajectoryLine) {
+      this.moonTrajectoryLine.visible = showHelpers && showMoon;
     }
 
     // 切换标签可见性
@@ -529,36 +685,43 @@ export class HorizonView {
   }
 
   /**
-   * 更新高度角指示弧线
-   * @param {number} altitude - 太阳仰角（弧度）
-   * @param {number} azimuth - 太阳方位角（弧度）
+   * 更新高度角指示弧线（只标文字，不带数字度数）
+   * @param {string} type - 'sun' | 'moon'
+   * @param {number} altitude - 仰角（弧度）
+   * @param {number} azimuth - 方位角（弧度）
+   * @param {number} colorHex - 弧线颜色
+   * @param {boolean} show - 是否显示
    */
-  _updateAltitudeIndicator(altitude, azimuth) {
+  _updateAltitudeIndicator(type, altitude, azimuth, colorHex = 0xff9800, show = true) {
+    const arcProp = `${type}AltitudeArc`;
+    const labelProp = `${type}AltitudeLabel`;
+
     // 清除旧的高度弧
-    if (this.altitudeArc) {
-      this.group.remove(this.altitudeArc);
-      if (this.altitudeArc.geometry) this.altitudeArc.geometry.dispose();
-      if (this.altitudeArc.material) this.altitudeArc.material.dispose();
-      this.altitudeArc = null;
+    if (this[arcProp]) {
+      this.group.remove(this[arcProp]);
+      if (this[arcProp].geometry) this[arcProp].geometry.dispose();
+      if (this[arcProp].material) this[arcProp].material.dispose();
+      this[arcProp] = null;
     }
 
     // 清除旧的高度标签
-    if (this.altitudeLabel) {
-      this.group.remove(this.altitudeLabel);
-      if (this.altitudeLabel.material && this.altitudeLabel.material.map) {
-        this.altitudeLabel.material.map.dispose();
+    if (this[labelProp]) {
+      this.group.remove(this[labelProp]);
+      if (this[labelProp].material && this[labelProp].material.map) {
+        this[labelProp].material.map.dispose();
       }
-      if (this.altitudeLabel.material) this.altitudeLabel.material.dispose();
-      this.altitudeLabel = null;
+      if (this[labelProp].material) this[labelProp].material.dispose();
+      this[labelProp] = null;
     }
 
-    // 仰角小于等于0时不显示
-    if (altitude <= 0) return;
+    // 仰角小于等于0或隐藏时不显示
+    if (altitude <= 0 || !show) return;
 
-    // 在太阳方位角所在的垂直平面内，绘制从地平线到太阳仰角的弧
+    // 在星体方位角所在的垂直平面内，绘制从地平线到星体仰角的弧
     const arcPoints = [];
     const arcSegments = 20;
-    const arcRadius = SKY_RADIUS * 0.6; // 弧线半径略小于天穹
+    // 太阳使用0.6，月球使用0.55，防止重合
+    const arcRadius = SKY_RADIUS * (type === 'sun' ? 0.6 : 0.55);
 
     for (let i = 0; i <= arcSegments; i++) {
       const a = (i / arcSegments) * altitude; // 从0到当前仰角
@@ -570,14 +733,14 @@ export class HorizonView {
 
     const arcGeo = new THREE.BufferGeometry().setFromPoints(arcPoints);
     const arcMat = new THREE.LineBasicMaterial({
-      color: 0xff9800,
+      color: colorHex,
       transparent: true,
       opacity: 0.8,
       linewidth: 2
     });
 
-    this.altitudeArc = new THREE.Line(arcGeo, arcMat);
-    this.group.add(this.altitudeArc);
+    this[arcProp] = new THREE.Line(arcGeo, arcMat);
+    this.group.add(this[arcProp]);
   }
 
   /**

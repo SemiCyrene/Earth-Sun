@@ -159,13 +159,24 @@ export class SceneManager {
           this.controls.enabled = false;
           return;
         }
-      } else if (this.currentView === 'horizon' && this.horizonView && this.horizonView.sun) {
-        const intersects = this.raycaster.intersectObject(this.horizonView.sun);
-        if (intersects.length > 0) {
-          this.isDragging = true;
-          this.dragTarget = 'sun';
-          this.controls.enabled = false;
-          return;
+      } else if (this.currentView === 'horizon' && this.horizonView) {
+        if (this.horizonView.sun) {
+          const intersects = this.raycaster.intersectObject(this.horizonView.sun);
+          if (intersects.length > 0) {
+            this.isDragging = true;
+            this.dragTarget = 'sun';
+            this.controls.enabled = false;
+            return;
+          }
+        }
+        if (this.horizonView.moon && this.horizonView.moon.visible) {
+          const intersects = this.raycaster.intersectObject(this.horizonView.moon);
+          if (intersects.length > 0) {
+            this.isDragging = true;
+            this.dragTarget = 'moon';
+            this.controls.enabled = false;
+            return;
+          }
         }
       }
     });
@@ -316,13 +327,13 @@ export class SceneManager {
    * @param {object} params - 更新参数
    */
   updateView(params) {
-    const { dayOfYear, timeOfDay, showHelpers, showLabels, latitudeDeg, longitudeDeg, locations, activeLocationId } = params;
+    const { dayOfYear, timeOfDay, showHelpers, showLabels, latitudeDeg, longitudeDeg, locations, activeLocationId, moonDay, showSun, showMoon } = params;
 
     if (this.currentView === 'space' || this.currentView === 'earth' || this.currentView === 'surface') {
       const isSurfaceView = this.currentView === 'surface';
       this.lastLatitudeDeg = latitudeDeg;
       this.lastLongitudeDeg = longitudeDeg;
-      this.spaceView.update(dayOfYear, timeOfDay, showHelpers, showLabels, latitudeDeg, longitudeDeg, locations, activeLocationId, isSurfaceView);
+      this.spaceView.update(dayOfYear, timeOfDay, showHelpers, showLabels, latitudeDeg, longitudeDeg, locations, activeLocationId, isSurfaceView, moonDay, showSun, showMoon);
       
       // 动态调整太阳大小和光晕：实地视角下把太阳缩小，并隐藏光晕
       if (this.spaceView.earthMesh && this.spaceView.earthMesh.material) {
@@ -358,7 +369,7 @@ export class SceneManager {
       }
     } else {
       this.lastEarthAngle = undefined; // 离开地球视角时重置
-      this.horizonView.update(latitudeDeg, dayOfYear, timeOfDay, showHelpers, showLabels);
+      this.horizonView.update(latitudeDeg, dayOfYear, timeOfDay, showHelpers, showLabels, moonDay, showSun, showMoon);
     }
   }
 

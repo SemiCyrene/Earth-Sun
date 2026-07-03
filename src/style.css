@@ -479,8 +479,20 @@ input[type="range"]::-moz-range-thumb:hover {
   display: none;
 }
 
+#toggle-sun-row,
+#toggle-moon-row {
+  display: none;
+}
+
 body.horizon-mode #latitude-section {
   display: block;
+}
+
+body.horizon-mode #toggle-sun-row,
+body.horizon-mode #toggle-moon-row,
+body.surface-mode #toggle-sun-row,
+body.surface-mode #toggle-moon-row {
+  display: flex;
 }
 
 body.horizon-mode .horizon-only {

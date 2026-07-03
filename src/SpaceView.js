@@ -4,7 +4,7 @@
  */
 
 import * as THREE from 'three';
-import { degToRad, radToDeg, getSolarDeclination, getEarthOrbitalAngle, getSolarPosition } from './GeoMath.js';
+import { degToRad, radToDeg, getSolarDeclination, getEarthOrbitalAngle, getSolarPosition, getMoonPhaseAngle, getMoonPosition } from './GeoMath.js';
 
 // 地轴倾斜角（23.44°转换为弧度）
 const AXIAL_TILT = degToRad(23.44);
@@ -14,6 +14,14 @@ const ORBIT_RADIUS = 15;
 const EARTH_RADIUS = 1;
 // 太阳半径
 const SUN_RADIUS = 3;
+// 月球轨道半径（相对地球，模型单位）
+const MOON_ORBIT_RADIUS = 3.5;
+// 月球半径（约为地球的1/4）
+const MOON_RADIUS = 0.27;
+// 月球轨道相对黄道面的倾角（约5.14°）
+const MOON_ORBIT_INCLINATION = degToRad(0); // 教学理想化：抹平月球轨道倾角，使其与黄道共面
+// 朔望月天数
+const SYNODIC_MONTH = 29.53;
 
 export class SpaceView {
   constructor(scene) {
@@ -33,6 +41,7 @@ export class SpaceView {
     this._createSun();
     this._createEarth();
     this._createOrbit();
+    this._createMoon();
     this._createHelpers();
     this._createDirectRay();
     this._createLocalCompass();
@@ -504,6 +513,41 @@ export class SpaceView {
     this.surfaceFakeSun = new THREE.Mesh(fakeSunGeo, fakeSunMat);
     this.surfaceFakeSun.visible = false;
     this.localCompassGroup.add(this.surfaceFakeSun);
+
+    // 实地视角专用虚拟数学月球（高真实性，亮面由Shader计算）
+    const fakeMoonGeo = new THREE.SphereGeometry(0.12, 32, 32);
+    this.surfaceFakeMoonMat = new THREE.ShaderMaterial({
+      uniforms: {
+        sunPosition: { value: new THREE.Vector3(0, 0, 0) },
+        opacity: { value: 1.0 }
+      },
+      transparent: true,
+      vertexShader: `
+        varying vec3 vNormal;
+        void main() {
+          vNormal = normal;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform vec3 sunPosition;
+        uniform float opacity;
+        varying vec3 vNormal;
+        void main() {
+          // 太阳在无限远处，光影方向直接使用局部视太阳方向（因为vNormal和sunPosition同属指南针局部坐标系）
+          vec3 lightDir = normalize(sunPosition);
+          float intensity = dot(vNormal, lightDir);
+          vec3 brightColor = vec3(0.95, 0.93, 0.88);
+          // 模拟更清晰的地球反照光以显示球体轮廓，便于教学展示
+          vec3 darkColor   = vec3(0.18, 0.20, 0.26);
+          float t = smoothstep(-0.04, 0.04, intensity);
+          gl_FragColor = vec4(mix(darkColor, brightColor, t), opacity);
+        }
+      `
+    });
+    this.surfaceFakeMoon = new THREE.Mesh(fakeMoonGeo, this.surfaceFakeMoonMat);
+    this.surfaceFakeMoon.visible = false;
+    this.localCompassGroup.add(this.surfaceFakeMoon);
     
     this.surfaceTrajectoryGroup = new THREE.Group();
     this.surfaceTrajectoryGroup.visible = false;
@@ -513,10 +557,10 @@ export class SpaceView {
   }
 
 
-  /** 更新实地视角的太阳轨迹 */
-  _updateSurfaceSolarTrajectory(latitudeDeg, longitudeDeg, dayOfYear) {
-    if (this.lastSurfaceParams.lat === latitudeDeg && this.lastSurfaceParams.lng === longitudeDeg && this.lastSurfaceParams.day === dayOfYear) return;
-    this.lastSurfaceParams = { lat: latitudeDeg, lng: longitudeDeg, day: dayOfYear };
+  /** 更新实地视角的太阳和月球轨迹 */
+  _updateSurfaceSolarTrajectory(latitudeDeg, longitudeDeg, dayOfYear, moonDay = 15) {
+    if (this.lastSurfaceParams.lat === latitudeDeg && this.lastSurfaceParams.lng === longitudeDeg && this.lastSurfaceParams.day === dayOfYear && this.lastSurfaceParams.moonDay === moonDay) return;
+    this.lastSurfaceParams = { lat: latitudeDeg, lng: longitudeDeg, day: dayOfYear, moonDay: moonDay };
 
     // 清除旧轨迹
     for (const obj of this.surfaceTrajectory) {
@@ -525,30 +569,62 @@ export class SpaceView {
       if (obj.material) obj.material.dispose();
     }
     this.surfaceTrajectory = [];
+    this.sunSurfaceTrajectoryLine = null;
+    this.moonSurfaceTrajectoryLine = null;
 
-    const points = [];
-    const dist = 15; // 真实太阳距离
-    
-    // 基于严格天文公式计算视轨迹
+    const dist = 15; // 真实视星体距离
+
+    // 1. 太阳轨迹计算
+    const sunPoints = [];
     for (let h = 0; h <= 24.1; h += 0.25) {
       const pos = getSolarPosition(latitudeDeg, dayOfYear, h);
       const alt = pos.altitude;
       const az = pos.azimuth;
       
-      // X=东, Y=北, Z=天顶
       const x = dist * Math.cos(alt) * Math.sin(az);
       const y = dist * Math.cos(alt) * Math.cos(az);
       const z = dist * Math.sin(alt);
       
-      points.push(new THREE.Vector3(x, y, z));
+      sunPoints.push(new THREE.Vector3(x, y, z));
     }
 
-    if (points.length > 1) {
-      const geo = new THREE.BufferGeometry().setFromPoints(points);
+    if (sunPoints.length > 1) {
+      const geo = new THREE.BufferGeometry().setFromPoints(sunPoints);
       const mat = new THREE.LineBasicMaterial({ color: 0xff9800, transparent: true, opacity: 0.6, linewidth: 2 });
       const line = new THREE.Line(geo, mat);
       this.surfaceTrajectoryGroup.add(line);
       this.surfaceTrajectory.push(line);
+      this.sunSurfaceTrajectoryLine = line; // 保存太阳轨迹线引用
+    }
+
+    // 2. 月球轨迹计算 (浅蓝色虚线)
+    const moonPoints = [];
+    for (let h = 0; h <= 24.1; h += 0.25) {
+      const pos = getMoonPosition(latitudeDeg, dayOfYear, h, moonDay);
+      const alt = pos.altitude;
+      const az = pos.azimuth;
+
+      const x = dist * Math.cos(alt) * Math.sin(az);
+      const y = dist * Math.cos(alt) * Math.cos(az);
+      const z = dist * Math.sin(alt);
+
+      moonPoints.push(new THREE.Vector3(x, y, z));
+    }
+
+    if (moonPoints.length > 1) {
+      const geo = new THREE.BufferGeometry().setFromPoints(moonPoints);
+      const mat = new THREE.LineDashedMaterial({
+        color: 0x88ccff,
+        transparent: true,
+        opacity: 0.5,
+        dashSize: 0.3,
+        gapSize: 0.2
+      });
+      const line = new THREE.Line(geo, mat);
+      line.computeLineDistances();
+      this.surfaceTrajectoryGroup.add(line);
+      this.surfaceTrajectory.push(line);
+      this.moonSurfaceTrajectoryLine = line; // 保存月球轨迹线引用
     }
   }
 
@@ -641,6 +717,84 @@ export class SpaceView {
   }
 
   /**
+   * 创建月球
+   * 包括月球球体（使用Shader区分明暗面）和月球轨道辅助圆
+   */
+  _createMoon() {
+    // 月球公转组：跟随地球位置，月球绕此组中心公转
+    this.moonOrbitGroup = new THREE.Group();
+    this.group.add(this.moonOrbitGroup);
+
+    // 月球轨道倾斜组：模拟5.14°的轨道面倾斜
+    this.moonTiltGroup = new THREE.Group();
+    this.moonTiltGroup.rotation.x = MOON_ORBIT_INCLINATION;
+    this.moonOrbitGroup.add(this.moonTiltGroup);
+
+    // 月球球体：使用Shader，亮面白色，暗面深灰
+    const moonGeo = new THREE.SphereGeometry(MOON_RADIUS, 32, 32);
+    this.moonMat = new THREE.ShaderMaterial({
+      uniforms: {
+        sunDirection: { value: new THREE.Vector3(0, 0, 0) },
+      },
+      vertexShader: `
+        varying vec3 vWorldNormal;
+        varying vec3 vWorldPosition;
+        void main() {
+          vec4 worldPos = modelMatrix * vec4(position, 1.0);
+          vWorldPosition = worldPos.xyz;
+          vWorldNormal = normalize(mat3(modelMatrix) * normal);
+          gl_Position = projectionMatrix * viewMatrix * worldPos;
+        }
+      `,
+      fragmentShader: `
+        uniform vec3 sunDirection;
+        varying vec3 vWorldNormal;
+        varying vec3 vWorldPosition;
+        void main() {
+          // 太阳在无限远处，光线为平行光（亮面与地球亮面完全平行，不指向模型太阳点光源）
+          vec3 lightDir = normalize(sunDirection);
+          float intensity = dot(normalize(vWorldNormal), lightDir);
+          // 亮面：偏暖白；暗面：明晰底光以显示球体轮廓，便于教学
+          vec3 brightColor = vec3(0.95, 0.93, 0.88);
+          vec3 darkColor   = vec3(0.12, 0.14, 0.18);
+          // 晨昏线柔和过渡
+          float t = smoothstep(-0.04, 0.04, intensity);
+          vec3 color = mix(darkColor, brightColor, t);
+          // 亮面高光（模拟月面反射）
+          color += brightColor * pow(max(0.0, intensity), 4.0) * 0.15;
+          gl_FragColor = vec4(color, 1.0);
+        }
+      `
+    });
+    this.moonMesh = new THREE.Mesh(moonGeo, this.moonMat);
+    this.moonTiltGroup.add(this.moonMesh);
+
+    // 月球轨道辅助圆（虚线，随辅助线显示开关控制）
+    const moonOrbitPoints = [];
+    const seg = 128;
+    for (let i = 0; i <= seg; i++) {
+      const a = (i / seg) * Math.PI * 2;
+      moonOrbitPoints.push(new THREE.Vector3(
+        MOON_ORBIT_RADIUS * Math.cos(a),
+        0,
+        -MOON_ORBIT_RADIUS * Math.sin(a)
+      ));
+    }
+    const moonOrbitGeo = new THREE.BufferGeometry().setFromPoints(moonOrbitPoints);
+    const moonOrbitMat = new THREE.LineDashedMaterial({
+      color: 0xaaaaaa,
+      transparent: true,
+      opacity: 0.35,
+      dashSize: 0.2,
+      gapSize: 0.15,
+    });
+    this.moonOrbitLine = new THREE.Line(moonOrbitGeo, moonOrbitMat);
+    this.moonOrbitLine.computeLineDistances();
+    this.moonTiltGroup.add(this.moonOrbitLine);
+    this.helpers.push(this.moonOrbitLine);
+  }
+
+  /**
    * 更新模型状态
    * @param {number} dayOfYear - 一年中的天数 (1-366)
    * @param {number} timeOfDay - 一天中的时间 (0-24小时，代表观察者本地太阳时)
@@ -651,8 +805,11 @@ export class SpaceView {
    * @param {Array} locations - 保存的地点列表
    * @param {string} activeLocationId - 当前激活的地点ID
    * @param {boolean} isSurfaceView - 是否为实地视角
+   * @param {number} moonDay - 月相日期 (1~30)
+   * @param {boolean} showSun - 是否显示太阳
+   * @param {boolean} showMoon - 是否显示月球
    */
-  update(dayOfYear, timeOfDay, showHelpers, showLabels, latitudeDeg, longitudeDeg, locations = [], activeLocationId = null, isSurfaceView = false) {
+  update(dayOfYear, timeOfDay, showHelpers, showLabels, latitudeDeg, longitudeDeg, locations = [], activeLocationId = null, isSurfaceView = false, moonDay = 15, showSun = true, showMoon = true) {
     this._updateLocationMarkers(locations);
     
     // 计算地球公转角度
@@ -731,15 +888,49 @@ export class SpaceView {
             dist * Math.cos(alt) * Math.cos(az),
             dist * Math.sin(alt)
           );
-          this.surfaceFakeSun.visible = true;
+          this.surfaceFakeSun.visible = showSun;
+        }
+        if (this.surfaceFakeMoon) {
+          const pos = getMoonPosition(latitudeDeg, dayOfYear, timeOfDay, moonDay);
+          const alt = pos.altitude;
+          const az = pos.azimuth;
+          const dist = 15;
+          const mX = dist * Math.cos(alt) * Math.sin(az);
+          const mY = dist * Math.cos(alt) * Math.cos(az);
+          const mZ = dist * Math.sin(alt);
+          this.surfaceFakeMoon.position.set(mX, mY, mZ);
+          
+          this.surfaceFakeMoon.visible = showMoon; // 根据控制开关显示或隐藏
+          if (this.surfaceFakeMoonMat) {
+            const sunPos = getSolarPosition(latitudeDeg, dayOfYear, timeOfDay);
+            const sX = dist * Math.cos(sunPos.altitude) * Math.sin(sunPos.azimuth);
+            const sY = dist * Math.cos(sunPos.altitude) * Math.cos(sunPos.azimuth);
+            const sZ = dist * Math.sin(sunPos.altitude);
+            this.surfaceFakeMoonMat.uniforms.sunPosition.value.set(sX, sY, sZ);
+            
+            // 地平线以下半透明
+            if (alt < 0) {
+              this.surfaceFakeMoonMat.uniforms.opacity.value = 0.2;
+            } else {
+              this.surfaceFakeMoonMat.uniforms.opacity.value = 1.0;
+            }
+          }
         }
         this.localCompassGroup.visible = true;
         if (this.surfaceGridGroup) this.surfaceGridGroup.visible = showHelpers;
         if (this.surfaceTrajectoryGroup) {
           this.surfaceTrajectoryGroup.visible = showHelpers;
           if (showHelpers) {
-            this._updateSurfaceSolarTrajectory(latitudeDeg, longitudeDeg, dayOfYear);
+            this._updateSurfaceSolarTrajectory(latitudeDeg, longitudeDeg, dayOfYear, moonDay);
           }
+        }
+        
+        // 强制同步实地视角下太阳与月球运行轨迹线的可见性
+        if (this.sunSurfaceTrajectoryLine) {
+          this.sunSurfaceTrajectoryLine.visible = showHelpers && showSun;
+        }
+        if (this.moonSurfaceTrajectoryLine) {
+          this.moonSurfaceTrajectoryLine.visible = showHelpers && showMoon;
         }
         if (this.atmosphereMesh) this.atmosphereMesh.visible = false;
         
@@ -770,10 +961,16 @@ export class SpaceView {
 
         // 动态调整地面颜色以模拟光照
         if (this.groundMat) {
+          // 强制更新矩阵，确保 worldToLocal 使用最新的位置和旋转计算
+          this.localCompassGroup.updateMatrixWorld(true);
           const sunWorld = new THREE.Vector3(0, 0, 0);
           const sunLocal = sunWorld.clone();
           this.localCompassGroup.worldToLocal(sunLocal);
-          const sunAlt = sunLocal.normalize().z;
+          
+          let sunAlt = -1.0; // 默认极暗
+          if (sunLocal.lengthSq() > 0.0001) {
+            sunAlt = sunLocal.normalize().z;
+          }
           
           const colorStops = [
             { alt: 1.0, color: new THREE.Color(0x5a9ad0) }, // 正午：明亮的蔚蓝
@@ -804,9 +1001,38 @@ export class SpaceView {
         }
       } else {
         if (this.surfaceFakeSun) this.surfaceFakeSun.visible = false;
+        if (this.surfaceFakeMoon) this.surfaceFakeMoon.visible = false;
         this.localCompassGroup.visible = false;
         if (this.atmosphereMesh) this.atmosphereMesh.visible = true;
       }
+    }
+
+    // ====== 更新月球位置与朝向 ======
+    if (this.moonOrbitGroup && this.moonMesh) {
+      // 月球公转组跟随地球在轨道上的位置
+      this.moonOrbitGroup.position.set(earthX, 0, earthZ);
+
+      const moonPhaseAngle = getMoonPhaseAngle(moonDay);
+      // 太阳朝向地球的角度 (从地球中心看太阳的黄道角，考虑Z轴反转的顺时针投影)
+      const sunAngle = Math.atan2(earthZ, -earthX);
+      const moonOrbitAngle = sunAngle + moonPhaseAngle;
+
+      // 月球在月轨组（倾斜后）局部坐标中的位置
+      const moonLocalX = MOON_ORBIT_RADIUS * Math.cos(moonOrbitAngle);
+      const moonLocalZ = -MOON_ORBIT_RADIUS * Math.sin(moonOrbitAngle);
+      this.moonMesh.position.set(moonLocalX, 0, moonLocalZ);
+
+      // 潮汐锁定：始终同一面朝向地球（使用 lookAt 自适应轨道倾角）
+      this.moonMesh.lookAt(0, 0, 0);
+
+      // 更新月面平行光朝向，使其与地球受光面保持平行（光线平行射入地月系）
+      if (this.moonMat) {
+        const dirToSun = new THREE.Vector3().copy(this.moonOrbitGroup.position).negate().normalize();
+        this.moonMat.uniforms.sunDirection.value.copy(dirToSun);
+      }
+
+      // 隐藏实地视角下的月球（只在宇宙视角显示）
+      this.moonOrbitGroup.visible = !isSurfaceView;
     }
   }
 }

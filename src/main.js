@@ -18,6 +18,10 @@ import {
   getGeoDescription,
   degToRad,
   radToDeg,
+  getMoonPhaseAngle,
+  getMoonPhaseName,
+  getMoonPosition,
+  getMoonMaxAltitude,
 } from './GeoMath.js';
 import './style.css';
 
@@ -40,6 +44,9 @@ const state = {
   speedSurface: 1,
   speedHorizon: 1,
   doyFloat: getDayOfYear(3, 21), // 用于保存连续的浮点日期，解决自动播放低速时取整卡顿
+  moonDay: 1.0, // 初始月相日期设置为初一
+  showSun: true,
+  showMoon: true,
 };
 
 const LOCATION_COLORS = [
@@ -56,18 +63,21 @@ const els = {
   // 滑块
   monthSlider: document.getElementById('month-slider'),
   daySlider: document.getElementById('day-slider'),
+  moonSlider: document.getElementById('moon-slider'),
   hourSlider: document.getElementById('hour-slider'),
   latSlider: document.getElementById('lat-slider'),
   speedSlider: document.getElementById('speed-slider'),
   // 显示值
   monthValue: document.getElementById('month-value'),
   dayValue: document.getElementById('day-value'),
+  moonValue: document.getElementById('moon-value'),
   hourValue: document.getElementById('hour-value'),
   latValue: document.getElementById('lat-value'),
   speedValue: document.getElementById('speed-value'),
   // 开关
-  toggleHelpers: document.getElementById('toggle-helpers'),
   toggleLabels: document.getElementById('toggle-labels'),
+  toggleSun: document.getElementById('toggle-sun'),
+  toggleMoon: document.getElementById('toggle-moon'),
   toggleAnimRev: document.getElementById('toggle-anim-rev'),
   rowAnimRev: document.getElementById('row-anim-rev'),
   toggleAnimRot: document.getElementById('toggle-anim-rot'),
@@ -86,6 +96,9 @@ const els = {
   // 信息面板
   infoDate: document.getElementById('info-date'),
   infoSubsolar: document.getElementById('info-subsolar'),
+  infoMoonPhase: document.getElementById('info-moon-phase'),
+  infoMoonAlt: document.getElementById('info-moon-alt'),
+  infoMoonMaxAlt: document.getElementById('info-moon-max-alt'),
   infoDaylength: document.getElementById('info-daylength'),
   infoCurrentAlt: document.getElementById('info-current-alt'),
   infoNoonAlt: document.getElementById('info-noon-alt'),
@@ -107,6 +120,22 @@ function formatTime(hour) {
   const h = Math.floor(hour);
   const m = Math.round((hour - h) * 60);
   return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+}
+
+/** 格式化农历日期描述 */
+function formatLunarDay(day) {
+  const intDay = Math.round(day);
+  const lunarNames = [
+    "", "初一", "初二", "初三", "初四", "初五", "初六", "初七", "初八", "初九", "初十",
+    "十一", "十二", "十三", "十四", "十五", "十六", "十七", "十八", "十九", "二十",
+    "廿一", "廿二", "廿三", "廿四", "廿五", "廿六", "廿七", "廿八", "廿九", "三十"
+  ];
+  let name = `农历${lunarNames[intDay] || intDay}`;
+  if (intDay === 1) name += " (新月)";
+  else if (intDay === 8) name += " (上弦月)";
+  else if (intDay === 15) name += " (满月)";
+  else if (intDay === 23) name += " (下弦月)";
+  return name;
 }
 
 /** 将纬度值格式化为带N/S的字符串 */
@@ -150,6 +179,29 @@ function updateInfoPanel() {
   // 日期
   const dateLabel = getDateLabel(month, day);
   els.infoDate.textContent = `${month}月${day}日 (${dateLabel})`;
+
+  // 1. 计算月相角（弧度）
+  const moonPhaseAngle = getMoonPhaseAngle(state.moonDay);
+  if (els.infoMoonPhase) {
+    els.infoMoonPhase.textContent = getMoonPhaseName(moonPhaseAngle);
+  }
+
+  // 2. 计算月球当前高度角 (使用经度/时角/月相日期)
+  const moonPos = getMoonPosition(latitude, doy, state.hour, state.moonDay);
+  if (els.infoMoonAlt) {
+    // 地平线以下显示负数，或也可以截断。为了物理教学，保留带符号负数或在下面时标明“已落”
+    if (moonPos.altitude < 0) {
+      els.infoMoonAlt.textContent = `地平线下 (${radToDeg(moonPos.altitude).toFixed(1)}°)`;
+    } else {
+      els.infoMoonAlt.textContent = `${radToDeg(moonPos.altitude).toFixed(1)}°`;
+    }
+  }
+
+  // 3. 计算月球当天的最大高度角 (即上中天高度)
+  const moonMaxAlt = radToDeg(getMoonMaxAltitude(latitude, doy, state.moonDay));
+  if (els.infoMoonMaxAlt) {
+    els.infoMoonMaxAlt.textContent = `${moonMaxAlt.toFixed(1)}°`;
+  }
 
   // 太阳直射点
   if (Math.abs(declDeg) < 0.5) {
@@ -221,6 +273,9 @@ function updateScene() {
     longitudeDeg: state.longitude,
     locations: state.locations,
     activeLocationId: state.activeLocationId,
+    moonDay: state.moonDay,
+    showSun: state.showSun,
+    showMoon: state.showMoon,
   });
 }
 
@@ -307,6 +362,13 @@ function renderLocationList() {
 
 /** 更新所有显示 */
 function updateAll() {
+  if (els.moonSlider) {
+    els.moonSlider.value = state.moonDay;
+  }
+  if (els.moonValue) {
+    els.moonValue.textContent = formatLunarDay(state.moonDay);
+  }
+
   updateScene();
   updateInfoPanel();
 }
@@ -326,6 +388,10 @@ els.monthSlider.addEventListener('input', (e) => {
   }
   els.daySlider.max = maxDay;
   state.doyFloat = getDayOfYear(state.month, state.day);
+  
+  // 主动拖动日期时，也让月相日期与公转轨道同步（保持浮点数以保证月球公转的平滑性）
+  state.moonDay = (((state.doyFloat - 81) % 29.53) + 29.53) % 29.53 + 1;
+
   updateAll();
 });
 
@@ -334,6 +400,17 @@ els.daySlider.addEventListener('input', (e) => {
   state.day = parseInt(e.target.value);
   els.dayValue.textContent = `${state.day}日`;
   state.doyFloat = getDayOfYear(state.month, state.day);
+  
+  // 主动拖动日期时，也让月相日期与公转轨道同步（保持浮点数以保证月球公转的平滑性）
+  state.moonDay = (((state.doyFloat - 81) % 29.53) + 29.53) % 29.53 + 1;
+
+  updateAll();
+});
+
+// --- 月相日期滑块 (用户独立修改月球公转相位与月相) ---
+els.moonSlider.addEventListener('input', (e) => {
+  state.moonDay = parseFloat(e.target.value);
+  els.moonValue.textContent = formatLunarDay(state.moonDay);
   updateAll();
 });
 
@@ -394,13 +471,19 @@ function updateSpeedSlider() {
 }
 
 // --- 开关控件 ---
-els.toggleHelpers.addEventListener('change', (e) => {
-  state.showHelpers = e.target.checked;
-  updateScene();
-});
 
 els.toggleLabels.addEventListener('change', (e) => {
   state.showLabels = e.target.checked;
+  updateScene();
+});
+
+els.toggleSun.addEventListener('change', (e) => {
+  state.showSun = e.target.checked;
+  updateScene();
+});
+
+els.toggleMoon.addEventListener('change', (e) => {
+  state.showMoon = e.target.checked;
   updateScene();
 });
 
@@ -440,6 +523,7 @@ els.btnSpaceView.addEventListener('click', () => {
   els.btnSurfaceView.classList.remove('active');
   els.btnHorizonView.classList.remove('active');
   document.body.classList.remove('horizon-mode');
+  document.body.classList.remove('surface-mode');
   sceneManager.switchView('space');
   els.rowAnimRev.style.display = 'flex';
   updateSpeedSlider();
@@ -454,6 +538,7 @@ els.btnEarthView.addEventListener('click', () => {
   els.btnSurfaceView.classList.remove('active');
   els.btnHorizonView.classList.remove('active');
   document.body.classList.remove('horizon-mode');
+  document.body.classList.remove('surface-mode');
   sceneManager.switchView('earth');
   els.rowAnimRev.style.display = 'flex';
   updateSpeedSlider();
@@ -468,6 +553,7 @@ els.btnSurfaceView.addEventListener('click', () => {
   els.btnEarthView.classList.remove('active');
   els.btnHorizonView.classList.remove('active');
   document.body.classList.remove('horizon-mode'); // 依然属于宇宙大场景
+  document.body.classList.add('surface-mode');
   sceneManager.switchView('surface');
   els.rowAnimRev.style.display = 'none';
   updateSpeedSlider();
@@ -482,6 +568,7 @@ els.btnHorizonView.addEventListener('click', () => {
   els.btnEarthView.classList.remove('active');
   els.btnSurfaceView.classList.remove('active');
   document.body.classList.add('horizon-mode');
+  document.body.classList.remove('surface-mode');
   sceneManager.switchView('horizon');
   els.rowAnimRev.style.display = 'none';
   updateSpeedSlider();
@@ -505,6 +592,10 @@ document.querySelectorAll('.quick-btn').forEach((btn) => {
     els.monthValue.textContent = `${month}月`;
     els.dayValue.textContent = `${day}日`;
     state.doyFloat = getDayOfYear(state.month, state.day);
+    
+    // 快捷切换日期时，也让月相日期与轨道同步
+    state.moonDay = (((state.doyFloat - 81) % 29.53) + 29.53) % 29.53 + 1;
+
     updateAll();
   });
 });
@@ -558,6 +649,11 @@ function animationLoop(timestamp) {
       els.daySlider.max = getDaysInMonth(month);
       els.monthValue.textContent = `${month}月`;
       els.dayValue.textContent = `${day}日`;
+
+      // 动画公转中，也带动机盘上的月相变化（使其平滑滚动并保留用户手动微调的相对偏置）
+      state.moonDay += dayAdvance;
+      state.moonDay = (((state.moonDay - 1) % 29.53) + 29.53) % 29.53 + 1;
+
       needsUpdate = true;
     }
 
@@ -604,14 +700,14 @@ function dayOfYearToDate(doy) {
 
 // ===== 启动 =====
 sceneManager.onObjectDragged = (targetType, dx, dy) => {
-  if (targetType === 'sun') {
-    // 拖动太阳改变时间时，自动关闭“自动自转”
+  if (targetType === 'sun' || targetType === 'moon') {
+    // 拖动太阳/月球改变时间时，自动关闭“自动自转”
     if (state.animRot) {
       state.animRot = false;
       els.toggleAnimRot.checked = false;
     }
     
-    // 地平视角：拖动太阳改变时间
+    // 地平视角：拖动太阳或月球改变时间
     // 鼠标右移 (dx > 0) 代表时间往后推，进一步降低灵敏度
     state.hour += dx * 0.005;
     if (state.hour >= 24) state.hour -= 24;
@@ -642,6 +738,12 @@ sceneManager.onObjectDragged = (targetType, dx, dy) => {
     els.daySlider.max = getDaysInMonth(month);
     els.monthValue.textContent = `${month}月`;
     els.dayValue.textContent = `${day}日`;
+
+    // 拖动地球公转时，也同步让月球相位跟着滚动（保留手动微调偏置）
+    const deltaDoy = dx * 0.2;
+    state.moonDay += deltaDoy;
+    state.moonDay = (((state.moonDay - 1) % 29.53) + 29.53) % 29.53 + 1;
+
     updateAll();
   }
 };
