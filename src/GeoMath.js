@@ -466,3 +466,101 @@ export function getMoonMaxAltitude(latitudeDeg, dayOfYear, moonDay) {
   return Math.PI / 2 - Math.abs(latRad - decl);
 }
 
+/**
+ * 计算月球在给定纬度和日期的月升与月落时间
+ * @param {number} latitudeDeg - 观察者纬度 (度)
+ * @param {number} dayOfYear - 一年中的第几天 (1-366)
+ * @param {number} moonDay - 月相日期 (1-30)
+ * @returns {{rise: string, set: string}} 月升和月落时间描述 (格式如 "18:24")
+ */
+export function getMoonRiseSetTimes(latitudeDeg, dayOfYear, moonDay = 15) {
+  const latRad = degToRad(latitudeDeg);
+  const declination = getMoonDeclination(dayOfYear, moonDay);
+  const ha = getSunriseHourAngle(latRad, declination);
+
+  // 极昼极夜判断
+  if (ha >= Math.PI - 0.001) {
+    return { rise: '全天不落', set: '全天不落' };
+  }
+  if (ha <= 0.001) {
+    return { rise: '全天不升', set: '全天不升' };
+  }
+
+  // 计算太阳和月球的赤经以获取中天时差
+  const orbitalAngle = getEarthOrbitalAngle(dayOfYear);
+  const T = 23.44 * Math.PI / 180; // 黄赤交角
+  const cosT = Math.cos(-T);
+  const sinT = Math.sin(-T);
+
+  // 1. 太阳赤道坐标
+  const sx = -Math.cos(orbitalAngle);
+  const sy = 0;
+  const sz = Math.sin(orbitalAngle);
+  const svx = sx;
+  const svy = sy * cosT - sz * sinT;
+  const svz = sy * sinT + sz * cosT;
+  const alpha_s = Math.atan2(svz, svx);
+
+  // 2. 月球赤道坐标 (基于扁平轨道 i = 0)
+  const lambda_sun = orbitalAngle + Math.PI;
+  const moonPhaseAngle = getMoonPhaseAngle(moonDay);
+  const L_moon = lambda_sun + moonPhaseAngle;
+  const D = 3.5;
+  const mx = D * Math.cos(L_moon);
+  const mz = -D * Math.sin(L_moon);
+  
+  // i = 0.0, 所以 my_tilt = 0, mz_tilt = mz
+  const mvx = mx;
+  const mvy = -mz * sinT;
+  const mvz = mz * cosT;
+  const alpha_m = Math.atan2(mvz, mvx);
+
+  // 3. 计算月球本地中天时刻 (transit time in local solar hours)
+  // 太阳时角为 H_s = alpha_m - alpha_s 时月球中天
+  // H_s = (t - 12) * 15° -> t = 12 + H_s * 12 / PI
+  let H_s = alpha_m - alpha_s;
+  // 归一化到 [-PI, PI]
+  H_s = Math.atan2(Math.sin(H_s), Math.cos(H_s));
+  
+  let t_transit = 12 + H_s * 12 / Math.PI;
+  t_transit = (t_transit % 24 + 24) % 24;
+
+  // 4. 计算月升和月落时间
+  const hourDiff = ha * 12 / Math.PI;
+  let t_rise = (t_transit - hourDiff + 24) % 24;
+  let t_set = (t_transit + hourDiff + 24) % 24;
+
+  // 5. 计算月升和月落的方位角 (以正北为0，顺时针为正)
+  const cosLat = Math.cos(latRad);
+  let riseAz = 0;
+  let setAz = 0;
+  if (Math.abs(cosLat) >= 0.0001) {
+    let cosA = Math.sin(declination) / cosLat;
+    cosA = Math.max(-1, Math.min(1, cosA));
+    const A = Math.acos(cosA);
+    riseAz = A;
+    setAz = 2 * Math.PI - A;
+  }
+
+  // 格式化为 "HH:MM"
+  const formatTimeStr = (t) => {
+    const h = Math.floor(t);
+    const m = Math.round((t - h) * 60);
+    // 再次处理 round 之后的 60 分钟进位问题
+    let finalH = h;
+    let finalM = m;
+    if (finalM >= 60) {
+      finalM = 0;
+      finalH = (finalH + 1) % 24;
+    }
+    return `${finalH.toString().padStart(2, '0')}:${finalM.toString().padStart(2, '0')}`;
+  };
+
+  return {
+    rise: formatTimeStr(t_rise),
+    set: formatTimeStr(t_set),
+    riseAz: riseAz,
+    setAz: setAz
+  };
+}
+

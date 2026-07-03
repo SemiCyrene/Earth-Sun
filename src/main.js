@@ -22,6 +22,7 @@ import {
   getMoonPhaseName,
   getMoonPosition,
   getMoonMaxAltitude,
+  getMoonRiseSetTimes,
 } from './GeoMath.js';
 import './style.css';
 
@@ -99,7 +100,13 @@ const els = {
   infoMoonPhase: document.getElementById('info-moon-phase'),
   infoMoonAlt: document.getElementById('info-moon-alt'),
   infoMoonMaxAlt: document.getElementById('info-moon-max-alt'),
+  infoMoonrise: document.getElementById('info-moonrise'),
+  infoMoonset: document.getElementById('info-moonset'),
+  infoMoonriseAz: document.getElementById('info-moonrise-az'),
+  infoMoonsetAz: document.getElementById('info-moonset-az'),
   infoDaylength: document.getElementById('info-daylength'),
+  infoSunriseTime: document.getElementById('info-sunrise-time'),
+  infoSunsetTime: document.getElementById('info-sunset-time'),
   infoCurrentAlt: document.getElementById('info-current-alt'),
   infoNoonAlt: document.getElementById('info-noon-alt'),
   infoSunriseAz: document.getElementById('info-sunrise-az'),
@@ -203,6 +210,29 @@ function updateInfoPanel() {
     els.infoMoonMaxAlt.textContent = `${moonMaxAlt.toFixed(1)}°`;
   }
 
+  // 4. 计算月升与月落时间及方位角
+  const moonRiseSet = getMoonRiseSetTimes(latitude, doy, state.moonDay);
+  if (els.infoMoonrise) {
+    els.infoMoonrise.textContent = moonRiseSet.rise;
+  }
+  if (els.infoMoonset) {
+    els.infoMoonset.textContent = moonRiseSet.set;
+  }
+  if (els.infoMoonriseAz) {
+    if (moonRiseSet.rise === '全天不落' || moonRiseSet.rise === '全天不升') {
+      els.infoMoonriseAz.textContent = '—';
+    } else {
+      els.infoMoonriseAz.textContent = formatAzimuth(moonRiseSet.riseAz);
+    }
+  }
+  if (els.infoMoonsetAz) {
+    if (moonRiseSet.set === '全天不落' || moonRiseSet.set === '全天不升') {
+      els.infoMoonsetAz.textContent = '—';
+    } else {
+      els.infoMoonsetAz.textContent = formatAzimuth(moonRiseSet.setAz);
+    }
+  }
+
   // 太阳直射点
   if (Math.abs(declDeg) < 0.5) {
     els.infoSubsolar.textContent = `0° (赤道)`;
@@ -235,15 +265,19 @@ function updateInfoPanel() {
   const noonAlt = radToDeg(getNoonAltitude(latRad, decl));
   els.infoNoonAlt.textContent = `${noonAlt.toFixed(1)}°`;
 
-  // 日出日落方位
+  // 日出日落时间及方位
   if (Math.abs(ha - Math.PI) < 0.01) {
     // 极昼
     els.infoSunriseAz.textContent = '—（极昼）';
     els.infoSunsetAz.textContent = '—（极昼）';
+    if (els.infoSunriseTime) els.infoSunriseTime.textContent = '全天不落';
+    if (els.infoSunsetTime) els.infoSunsetTime.textContent = '全天不落';
   } else if (Math.abs(ha) < 0.01) {
     // 极夜
     els.infoSunriseAz.textContent = '—（极夜）';
     els.infoSunsetAz.textContent = '—（极夜）';
+    if (els.infoSunriseTime) els.infoSunriseTime.textContent = '全天不升';
+    if (els.infoSunsetTime) els.infoSunsetTime.textContent = '全天不升';
   } else {
     // 日出时角为负值（上午），日落时角为正值（下午）
     const sunriseHourAngle = -ha;
@@ -254,6 +288,27 @@ function updateInfoPanel() {
     const sunsetAz = getSolarAzimuth(latRad, decl, sunsetHourAngle, sunsetAlt);
     els.infoSunriseAz.textContent = formatAzimuth(sunriseAz);
     els.infoSunsetAz.textContent = formatAzimuth(sunsetAz);
+
+    // 计算日出日落的当地真太阳时 (小时，0-24)
+    // 太阳中天在 12:00
+    const sunriseHour = 12 - (ha * 12 / Math.PI);
+    const sunsetHour = 12 + (ha * 12 / Math.PI);
+
+    // 格式化时间字符串
+    const formatTimeStr = (t) => {
+      const h = Math.floor(t);
+      const m = Math.round((t - h) * 60);
+      let finalH = h;
+      let finalM = m;
+      if (finalM >= 60) {
+        finalM = 0;
+        finalH = (finalH + 1) % 24;
+      }
+      return `${finalH.toString().padStart(2, '0')}:${finalM.toString().padStart(2, '0')}`;
+    };
+
+    if (els.infoSunriseTime) els.infoSunriseTime.textContent = formatTimeStr(sunriseHour);
+    if (els.infoSunsetTime) els.infoSunsetTime.textContent = formatTimeStr(sunsetHour);
   }
 
   // 地理知识描述
